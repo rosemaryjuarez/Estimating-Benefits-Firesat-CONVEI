@@ -1,6 +1,15 @@
 # ============================================
-# FireSat VOI Analysis - Data Loading Script
+# 01 - Data Loading Script
 # ============================================
+# In Collaboration with Earth Fire Alliance and WFF CONVEI
+# Rosemary Juarez and Renato Molina
+
+#-------------------------------
+# Order of script documentation
+# ------------------------------
+
+#01a - reading CSV Files
+#01b - reading 
 
 # -----------------------
 # Install packages (run once)
@@ -23,6 +32,9 @@ library(tidylog)
 
 here()
 
+################################
+#     01A: Reading in Data
+################################
 
 # -----------------------
 # CSV files (incident data, costs, etc.)
@@ -174,116 +186,19 @@ mutate(
   )
 
 #PLOT
-ggplot(wfigs_clean, aes(x = containment_delay_hrs, y = poly_GISAcres)) +
+ggplot(wfigs_clean, aes(x = containment_delay_hrs, y = log(poly_GISAcres))) +
   geom_point(alpha = 0.3) +
   geom_smooth(method = "lm", color = "red") +
   labs(
     title = "Time to Containment vs Fire Size",
     x = "Hours from Discovery to Containment",
-    y = "Acres Burned (GIS)",
+    y = "Acres Burned (Log)",
     caption = "Source: NIFC WFIGS"
   ) +
   theme_bw()
 
 ggsave("outputs/figures/time_to_containment_vs_fire_size.png", width = 8, height = 5, dpi = 300)
 # 
-# RESTARTING BECAUSE FINAL ACRES BURNED ONLY HAS 2K ROWS OUT OF THE POSSIBLE 34K.
-# #HAS CONTAINMENT HAS ABOUT 27K
-# 
-# wfigs <- wfigs %>% 
-#   mutate(
-#     discovery_time = mdy_hms(attr_FireDiscoveryDateTime),
-#     response_time = mdy_hms(attr_InitialResponseDateTime),
-#     response_delay_hrs = as.numeric(difftime(response_time, discovery_time, units = "hours"))
-#   )
-# 
-# # Filter out weird values (negative delays, extreme outliers)
-# 
-# wfigs_clean <- wfigs %>%
-#   filter(response_delay_hrs >= 0, response_delay_hrs < 48) #%>% 
-#   filter(OBJECTID != 14630)
-# 
-# class(wfigs_clean)
-# 
-# #check 
-# 
-# wfigs_clean %>% 
-#   select(response_delay_hrs, response_time, attr_FinalAcres, OBJECTID) %>% 
-#   view()
-# 
-# wfigs %>%
-#   summarise(
-#     total = n(),
-#     has_response_time = sum(!is.na(attr_InitialResponseDateTime)),
-#     has_discovery_time = sum(!is.na(attr_FireDiscoveryDateTime)),
-#     has_final_acres = sum(!is.na(attr_FinalAcres))
-#   )
-# 
-# wfigs %>%
-#   summarise(
-#     has_containment = sum(!is.na(attr_ContainmentDateTime))
-#   )
-# # Scatterplot: does longer delay = bigger fire?
-# 
-# #cant really use this anymore because final acres has approx only 2k data entries, while containment is nearly complete
-# ggplot(wfigs_clean, aes(x = response_delay_hrs, y = attr_FinalAcres)) +
-#   geom_point(alpha = 0.99) +
-#   geom_smooth(method = "lm", color = "red", alpha = .5) +
-#   labs(
-#     title = "Response Delay vs Final Fire Size",
-#     x = "Hours from Discovery to Initial Response",
-#     y = "Final Acres Burned",
-#     caption = "Source: NIFC WFIGS"
-#   ) +
-#   theme_minimal()
-# 
-# ggsave("delay_vs_fire_size.png", width = 8, height = 5, dpi = 300)
-# 
-# 
-# ggplotly(p)
-
-## -------------------------
-##  map version
-##  -------------------------
-
-# library(tigris)
-# states_sf <- states(cb = TRUE) %>%
-#   filter(!STUSPS %in% c("PR", "VI", "GU", "AS", "MP")) 
-#   
-# # If not, convert it back
-# wfigs_clean <- st_as_sf(wfigs_clean)
-# 
-# wfigs_clean <- wfigs_clean %>%
-#   filter(!is.na(attr_InitialLongitude), !is.na(attr_InitialLatitude)) %>%
-#   st_as_sf(coords = c("attr_InitialLongitude", "attr_InitialLatitude"), crs = 4326)
-# 
-# # Map colored by response delay
-# ggplot() +
-#   geom_sf(data = states_sf, fill = "grey95", color = "grey50", size = 0.2) +
-#   geom_sf(data = wfigs_clean, aes(color = response_delay_hrs), size = 0.5, alpha = 0.5) +
-#   scale_color_gradient(low = "yellow", high = "red", name = "Response\nDelay (hrs)") +
-#   labs(
-#     title = "Wildfire Response Delay by Location",
-#     caption = "Source: NIFC WFIGS"
-#   ) +
-#   theme_void()
-# 
-# ggsave("response_delay_map.png", width = 10, height = 6, dpi = 300)
-# 
-# # Or map colored by final fire size
-# ggplot() +
-#   #geom_sf(data = states_sf, fill = "grey95", color = "grey50", size = 0.2) +
-#   geom_sf(data = wfigs_clean, aes(color = attr_FinalAcres), size = 0.5, alpha = 0.5) +
-#   scale_color_gradient(low = "yellow", high = "darkred", name = "Final\nAcres") +
-#   labs(
-#     title = "Wildfire Size by Location",
-#     caption = "Source: NIFC WFIGS"
-#   ) +
-#   theme_void() 
-# 
-# 
-# 
-# ggsave("fire_size_map.png", width = 10, height = 6, dpi = 300)
 
 # -----------------------
 # GDB files (fire perimeters, spatial data)
@@ -302,47 +217,64 @@ ggsave("outputs/figures/time_to_containment_vs_fire_size.png", width = 8, height
 # glimpse(fire_perimeters)
 
 # -----------------------
-# NetCDF files (emissions, air quality grids)
+# NetCDF files (emissions, air quality grids?)
 # -----------------------
-# Example: GFED emissions, EPA air quality
 
-# See what's in the file
-# tidync("emissions.nc")
+#     -------------------------------------------------------------------------
+#     
+#     WARNING: RUNNING EMISSIONS DOWN BELOW WILL TAKE APPROX 2-5 MINUTES TO LOAD 
+# 
+#     -------------------------------------------------------------------------
 
-# Pull out a specific variable
-# emissions <- tidync("missions.nc") %>%
-#   hyper_tibble()
 
-# Quick exploration
-# glimpse(emissions)
+# us bounding box
+ca_lon_min <- -124
+ca_lon_max <- -114
+ca_lat_min <- 32
+ca_lat_max <- 42
 
-# -----------------------
-# Data cleaning template
-# -----------------------
-# Once loaded, i want to standardize:
+# Load 2023 and 2024 monthly data
+monthly_2023 <- tidync("data/raw/GFED5.1ext_Beta/Monthly/GFED5.1ext_monthly_2023.nc", force = TRUE) %>%
+  hyper_tibble() %>%
+  mutate(
+    lon = as.numeric(lon),
+    lat = as.numeric(lat),
+    time = as.POSIXct(time, format = "%Y-%m-%dT%H:%M:%S"),
+    year = year(time),
+    month = month(time)
+  ) %>%
+  filter(
+    lon >= us_lon_min & lon <= us_lon_max,
+    lat >= us_lat_min & lat <= us_lat_max
+  )
 
-# Dates - make sure they're in date format
-# incident_data <- incident_data %>%
-#   mutate(
-#     detection_date = as.POSIXct(detection_date, format = "%Y-%m-%d %H:%M:%S"),
-#     containment_date = as.POSIXct(containment_date, format = "%Y-%m-%d %H:%M:%S")
-#   )
+monthly_2024 <- tidync("data/raw/GFED5.1ext_Beta/Monthly/GFED5.1ext_monthly_2024.nc", force = TRUE) %>%
+  hyper_tibble() %>%
+  mutate(
+    lon = as.numeric(lon),
+    lat = as.numeric(lat),
+    time = as.POSIXct(time, format = "%Y-%m-%dT%H:%M:%S"),
+    year = year(time),
+    month = month(time)
+  ) %>%
+  filter(
+    lon >= us_lon_min & lon <= us_lon_max,
+    lat >= us_lat_min & lat <= us_lat_max
+  )
 
-# Column names - lowercase and snake_case
-# incident_data <- incident_data %>%
-#   rename_with(~ tolower(gsub(" ", "_", .x)))
+# Combine both years
+all_monthly_us <- bind_rows(monthly_2023, monthly_2024)
 
-# Calculate detection delay
-# incident_data <- incident_data %>%
-#   mutate(
-#     detection_delay_hrs = as.numeric(difftime(dispatch_time, detection_time, units = "hours"))
-#   )
+# Summary by year and month
+monthly_summary <- all_monthly_us %>%
+  group_by(year, month) %>%
+  summarise(
+    total_PM25 = sum(PM2.5, na.rm = TRUE),
+    total_CO2 = sum(CO2, na.rm = TRUE),
+    total_DM = sum(DM, na.rm = TRUE),
+    grid_cells_with_fire = sum(DM > 0, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(year, month)
 
-# -----------------------
-# Joining datasets
-# -----------------------
-# Once cleaned, join by common key (incident ID, date, location)
-
-# combined_data <- incident_data %>%
-#   left_join(cost_data, by = "incident_id") %>%
-#   left_join(damage_data, by = "incident_id")
+monthly_summary
