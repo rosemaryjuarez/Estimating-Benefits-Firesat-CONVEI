@@ -28,38 +28,65 @@ library(here)
 library(janitor)
 library(plotly)
 library(tidylog)
+library(tigris)
+library(patchwork)
+library(broom)
+library(sandwich)
+library(lmtest)
+options(tigris_use_cache = TRUE)
 
 
 here()
 
-################################
-#     01A: Reading in Data
-################################
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+#          READING DATA
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 # -----------------------
-# CSV files (incident data, costs, etc.)
+# CSV files 
 # -----------------------
-# CAL FIRE incident data, NIFC SIT-209 exports
-# this data originates from the National intraagency Fire Council. Link to the data:
+# SHIELDUS DATA
+# sourced from the University of Miami
+
+sheldus <- read_csv(here("data", "raw", "direct_loss_aggregated_output_29866.csv"))
+str(sheldus)
+glimpse(sheldus)
+
+insured_sheldus <- read_csv(here("data", "raw", "insured_crop_loss_aggregated_output_29866.csv"))
+str(insured_sheldus)
+
+# NIFC wfigs data
+# this data originates from the National intraagency Fire Council.
+# Fire perimeter polygons and incident attributes.
+#  Link to the data:
 
 wfigs <- read_csv("data/raw/WFIGS_Interagency_Perimeters.csv")
 
 # Quick exploration
-
 glimpse(wfigs)
 summary(wfigs)
-
 str(wfigs)
 
-# checking number of fires by year:
-# 
-wfigs %>% 
-  min(attr_FireDiscoveryDateTime)
+#data cleanup process:
+
+#changing the date of the discover of the fire date.
+#including new columns that are discovery date, time,and year.
+#including new columns that are containment time and deay by hrs.
+clean_wfigs <- wfigs %>%
+  mutate(
+    discovery_time = mdy_hms(attr_FireDiscoveryDateTime),
+    discovery_date = mdy_hms(attr_FireDiscoveryDateTime),
+    discovery_year = year(discovery_date),
+    containment_time = mdy_hms(attr_ContainmentDateTime),
+    containment_delay_hrs = as.numeric(difftime(containment_time, discovery_time, units = "hours"))
+  ) %>% 
+  mutate(
+    discovery_month = month(discovery_date))
 
 
 # summarizing data:
-
-
 summary_stats <- wfigs %>%
   summarise(
     total_fires = n(),
@@ -70,11 +97,19 @@ summary_stats <- wfigs %>%
     avg_cost = mean(attr_EstimatedCostToDate, na.rm = TRUE)
   )
 
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+ #     PRELIMINARY ANALYSIS
 
-# -----------------------
-# 2. Aggregate by state
-# -----------------------
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+# =============================================
+#     mapping wildfire size in acres by state
+# =============================================
+
+#------------------------
+# 1. Aggregate by state 
+#------------------------
 state_summary <- wfigs %>%
   group_by(attr_POOState) %>%
   summarise(
@@ -95,15 +130,10 @@ state_summary <- state_summary %>%
 # View state summary
 state_summary
 
-# -----------------------
-# 3. Map by state
-# -----------------------
-# Get US state boundaries
-library(tigris)
-options(tigris_use_cache = TRUE)
-
-state_t <- states(cb = TRUE)
-
+#----------------------------
+# 2. Map by state  
+#-------------------------
+# Get US state boundaries from TIGRIS
 states_sf <- states(cb = TRUE) %>%
   filter(!STUSPS %in% c( "VI", "AS", "MP", "GU", "PR"))  # continental US
 
@@ -112,7 +142,6 @@ state_map_data <- states_sf %>%
   left_join(state_summary, by = c("STUSPS" = "attr_POOState")) %>% 
   st_crop(xmin = -175, xmax = -60, ymin = 15, ymax = 75) %>% 
   st_transform(4269)
-
 
 # Create map
 ggplot(state_map_data) +
@@ -136,20 +165,12 @@ ggplot(state_map_data) +
 ggsave("outputs/figures/average_wildfire_size_by_state.png", width = 8, height = 5, dpi = 300 )
 
 
-# -----------------------
-# 3. fire discovery
-# -----------------------
-
-
-#changing the date of the discover of the fire date. including two new columns that are date time and year
-wfigs <- wfigs %>%
-  mutate(
-    discovery_date = mdy_hms(attr_FireDiscoveryDateTime),
-    discovery_year = year(discovery_date)
-  )
+#=================================
+# 3. Total acres burned by year                 
+#=================================
 
 # Annual trend
-annual_trend <- wfigs %>%
+annual_trend <- clean_wfigs %>%
   group_by(discovery_year) %>%
   summarise(
     fire_count = n(),
@@ -171,22 +192,20 @@ ggplot(annual_trend, aes(x = discovery_year, y = total_acres)) +
   scale_y_continuous(labels = scales::comma)
 
 ggsave("outputs/figures/total_acres_burned_by_year_histogram.png",  width = 8, height = 5, dpi = 300)
-#---------------------------------
-#       fire detection time and response
-# --------------------------------
-wfigs_clean <- wfigs %>%
-mutate(
-  discovery_time = mdy_hms(attr_FireDiscoveryDateTime),
-  containment_time = mdy_hms(attr_ContainmentDateTime),
-  containment_delay_hrs = as.numeric(difftime(containment_time, discovery_time, units = "hours"))
-) %>%
+
+
+
+#=============================================
+#     Fire containment time vs Fire Size
+#=============================================
+wfigs_filter <- clean_wfigs %>%      
   filter(
     containment_delay_hrs >= 0,  # under 30 days
     !is.na(poly_GISAcres)
   )
 
 #PLOT
-ggplot(wfigs_clean, aes(x = containment_delay_hrs, y = log(poly_GISAcres))) +
+ggplot(wfigs_filter, aes(x = containment_delay_hrs, y = log(poly_GISAcres))) +
   geom_point(alpha = 0.3) +
   geom_smooth(method = "lm", color = "red") +
   labs(
@@ -200,81 +219,120 @@ ggplot(wfigs_clean, aes(x = containment_delay_hrs, y = log(poly_GISAcres))) +
 ggsave("outputs/figures/time_to_containment_vs_fire_size.png", width = 8, height = 5, dpi = 300)
 # 
 
-# -----------------------
-# GDB files (fire perimeters, spatial data)
-# -----------------------
 
-# List layers in the geodatabase first
-# st_layers("path/to/your/fire_perimeters.gdb")
 
-# Read a specific layer
-# fire_perimeters <- st_read("path/to/your/fire_perimeters.gdb", layer = "layer_name")
 
-# If i just need the attribute table (no geometry)
-# fire_perimeters_df <- st_drop_geometry(fire_perimeters)
 
-# Quick exploration
-# glimpse(fire_perimeters)
+#######################################
+#          SHELDUS
+#######################################
+
+#sheldus preliminary analysis
+
 
 # -----------------------
-# NetCDF files (emissions, air quality grids?)
+# Merge WFIGS + SHELDUS
 # -----------------------
 
-#     -------------------------------------------------------------------------
-#     
-#     WARNING: RUNNING EMISSIONS DOWN BELOW WILL TAKE APPROX 2-5 MINUTES TO LOAD 
-# 
-#     -------------------------------------------------------------------------
 
+clean_wfigs %>% 
+  select(attr_POOFips) %>% 
+  slice_sample(n = 5)
 
-# us bounding box
-ca_lon_min <- -124
-ca_lon_max <- -114
-ca_lat_min <- 32
-ca_lat_max <- 42
+sheldus %>% 
+  select(County_FIPS) %>% 
+  slice_sample(n = 5)
 
-# Load 2023 and 2024 monthly data
-monthly_2023 <- tidync("data/raw/GFED5.1ext_Beta/Monthly/GFED5.1ext_monthly_2023.nc", force = TRUE) %>%
-  hyper_tibble() %>%
-  mutate(
-    lon = as.numeric(lon),
-    lat = as.numeric(lat),
-    time = as.POSIXct(time, format = "%Y-%m-%dT%H:%M:%S"),
-    year = year(time),
-    month = month(time)
-  ) %>%
+reg_data <- clean_wfigs %>%
+  left_join(sheldus,
+            by = c("attr_POOFips" = "County_FIPS",
+                   "discovery_year" = "Year",
+                   "discovery_month" = "Month")) %>%
   filter(
-    lon >= us_lon_min & lon <= us_lon_max,
-    lat >= us_lat_min & lat <= us_lat_max
+    containment_delay_hrs > 0,
+    attr_FinalAcres > 0
+  )  %>%
+  mutate(
+    log_acres       = log(attr_FinalAcres),
+    log_cost        = log(attr_EstimatedCostToDate + 1),
+    log_delay       = log(containment_delay_hrs),
+    log_prop_dmg    = log(`PropertyDmg(ADJ 2024)` + 1),
+    log_crop_dmg    = log(`CropDmg(ADJ 2024)` + 1),
+    has_sheldus     = !is.na(PropertyDmg),
+    fire_season     = ifelse(discovery_month %in% 6:10, 1, 0)
   )
 
-monthly_2024 <- tidync("data/raw/GFED5.1ext_Beta/Monthly/GFED5.1ext_monthly_2024.nc", force = TRUE) %>%
-  hyper_tibble() %>%
-  mutate(
-    lon = as.numeric(lon),
-    lat = as.numeric(lat),
-    time = as.POSIXct(time, format = "%Y-%m-%dT%H:%M:%S"),
-    year = year(time),
-    month = month(time)
-  ) %>%
-  filter(
-    lon >= us_lon_min & lon <= us_lon_max,
-    lat >= us_lat_min & lat <= us_lat_max
-  )
-
-# Combine both years
-all_monthly_us <- bind_rows(monthly_2023, monthly_2024)
-
-# Summary by year and month
-monthly_summary <- all_monthly_us %>%
-  group_by(year, month) %>%
+reg_data %>%
   summarise(
-    total_PM25 = sum(PM2.5, na.rm = TRUE),
-    total_CO2 = sum(CO2, na.rm = TRUE),
-    total_DM = sum(DM, na.rm = TRUE),
-    grid_cells_with_fire = sum(DM > 0, na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
-  arrange(year, month)
+    na_delay = sum(is.na(log_delay)),
+    na_acres = sum(is.na(log_acres)),
+    na_cost  = sum(is.na(log_cost)),
+    na_state = sum(is.na(attr_POOState)),
+    total    = n()
+  )
 
-monthly_summary
+
+# left_join: added 19 columns (StateName, CountyName, Hazard, Fatalities, FatalitiesPerCapita, …)
+# > rows only in x   33,615
+# > rows only in y  ( 3,571)
+# > matched rows      1,322
+# >                 ========
+#   > rows total       34,937
+#   
+#   
+
+reg_data <- clean_wfigs %>%
+  left_join(sheldus,
+            by = c("attr_POOFips" = "County_FIPS",
+                   "discovery_year" = "Year",
+                   "discovery_month" = "Month")) %>%
+  mutate(
+    acres = coalesce(poly_GISAcres, attr_FinalAcres),
+    cost  = coalesce(attr_EstimatedCostToDate, attr_EstimatedFinalCost)
+  ) %>%
+  filter(
+    containment_delay_hrs > 0,
+    acres > 0
+  ) %>%
+  mutate(                    #using log transformation as histogram shows heavy skewing
+    log_acres    = log(acres),
+    log_cost     = log(cost + 1),
+    log_delay    = log(containment_delay_hrs),
+    log_prop_dmg = log(`PropertyDmg(ADJ 2024)` + 1),
+    log_crop_dmg = log(`CropDmg(ADJ 2024)` + 1),
+    has_sheldus  = !is.na(PropertyDmg),
+    has_cost     = !is.na(cost),
+    fire_season  = ifelse(discovery_month %in% 6:10, 1, 0)
+  )
+
+
+
+
+# --- Skewness check: raw vs log-transformed distributions ---
+
+p1 <- ggplot(reg_data, aes(x = acres)) +
+  geom_histogram(bins = 50, fill = "steelblue", color = "white") +
+  labs(title = "Raw Acres", x = "Acres", y = "Count") +
+  theme_minimal()
+
+p2 <- ggplot(reg_data, aes(x = log_acres)) +
+  geom_histogram(bins = 50, fill = "steelblue", color = "white") +
+  labs(title = "Log Acres", x = "Log(Acres)", y = "Count") +
+  theme_minimal()
+
+p3 <- ggplot(reg_data, aes(x = containment_delay_hrs)) +
+  geom_histogram(bins = 50, fill = "coral", color = "white") +
+  labs(title = "Raw Delay (hrs)", x = "Hours", y = "Count") +
+  theme_minimal()
+
+p4 <- ggplot(reg_data, aes(x = log_delay)) +
+  geom_histogram(bins = 50, fill = "coral", color = "white") +
+  labs(title = "Log Delay", x = "Log(Hours)", y = "Count") +
+  theme_minimal()
+
+skew_plot <- (p1 + p2) / (p3 + p4) +
+  plot_annotation(title = "Distribution Check for Log Transformation")
+
+plot(skew_plot)
+
+ggsave("skewness_check.png", skew_plot, width = 10, height = 7, dpi = 300)
